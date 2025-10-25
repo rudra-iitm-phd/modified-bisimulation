@@ -9,7 +9,6 @@ import torch.nn.functional as F
 from collections import deque 
 import numpy as np
 import gymnasium as gym
-from tqdm import tqdm, trange
 
 
 class SacAgent:
@@ -107,7 +106,7 @@ class SacAgent:
             
             # Current Q-values
             state_emb = self.embedding(states)
-            current_q1, current_q2 = self.critic.get_q_values(state_emb, actions.detach())
+            current_q1, current_q2 = self.critic.get_q_values(state_emb, actions)
             
             # Critic loss
             q1_loss = F.mse_loss(current_q1.squeeze(), target_values)
@@ -138,32 +137,12 @@ class SacAgent:
                   target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
       def compute_bisimulation_loss(self, states_1, states_2, rewards_1, rewards_2):
-            embedding_1 = self.embedding(states_1)
-            embedding_2 = self.embedding(states_2)
-
-            embedding_diff = torch.norm(embedding_1 - embedding_2, dim = -1)
-
-            with torch.no_grad():
-                  value1 = self.target_critic(embedding_1)
-                  value2 = self.target_critic(embedding_2)
-                  value_diff = value1.squeeze() - value2.squeeze()
-
-            reward_diff = rewards_1 - rewards_2
-
-            value_norm = (torch.norm(value1, dim = -1) + torch.norm(value2, dim = -1)).mean(-1)
-
-            kl_lower_bound = 0.5 * (torch.pow(value_diff - reward_diff, 2))/(self.gamma * (value_norm**2))
-
-            return F.mse_loss(embedding_diff, kl_lower_bound)
-
+            pass
 
       def train(self, n_episodes, w_bisim:bool):
             reward_history = deque(maxlen=100)
 
-            pbar = tqdm(range(n_episodes), desc="Initializing...", unit="episode", 
-                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} ')
-
-            for ep in pbar:
+            for ep in range(n_episodes):
                   # DMControl reset returns a TimeStep object, not a simple state
                   timestep = self.env.reset()
                   
@@ -172,8 +151,6 @@ class SacAgent:
                   
                   ep_reward = 0
                   done = False
-
-                  step_count = 0
                   
                   while not done:
                         state_tensor = torch.FloatTensor(stacked_state).unsqueeze(0).to(self.device)
@@ -203,13 +180,6 @@ class SacAgent:
 
                         stacked_state = stacked_next_state
                         ep_reward += reward
-                        step_count += 1
-
-                        pbar.set_description(
-                              f"Ep {ep+1}/{n_episodes} | "
-                              f"Step {step_count} | "
-                              f"Avg R: {np.round(np.mean(reward_history), 3) if len(reward_history)>0 else 0} | "
-                        )
 
                         if len(self.buffer) > self.batch_size:
                               states, actions, rewards, next_states, dones = self.buffer.sample(self.batch_size)
@@ -230,7 +200,7 @@ class SacAgent:
                               critic_loss.backward()
                               self.optimizer_critic.step()
 
-                        
+                              print("yes")
 
                               # Actor update
                               actor_loss, prob_logits = self.compute_actor_loss(states)
@@ -238,8 +208,7 @@ class SacAgent:
                               actor_loss.backward()
                               self.optimizer_actor.step()
 
-                             
-                              
+                              print("yes")
 
                               # Alpha update
                               alpha_loss = self.compute_alpha_loss(prob_logits)
@@ -253,17 +222,8 @@ class SacAgent:
                   reward_history.append(ep_reward)
                   avg_reward = np.mean(reward_history)
 
-                  pbar.set_description(
-                        f"Ep {ep+1}/{n_episodes} | "
-                        f"Avg R: {avg_reward:.1f} | "
-                        f"Steps: {step_count} | "
-                        )
-            
-                  
-        
-                  
-        
-                  
+                  if (ep+1) % 20 == 0:
+                        print(f"Episode {ep+1}, Reward: {ep_reward:.2f}, Avg Reward (last 100 eps): {avg_reward:.2f}")
 
                               
 

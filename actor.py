@@ -25,49 +25,53 @@ class Policy(nn.Module):
 
 
 class SacActor(nn.Module):
-      def __init__(self, state_embedding_dim, action_dim, hidden_dim):
+      def __init__(self, state_embedding_dim, action_dim, hidden_dim=256):
             super(SacActor, self).__init__()
 
             self.LOG_STD_MIN, self.LOG_STD_MAX = -5, 2
             self.action_scale = 1.0
-            self.action_bias = 0
+            self.action_bias = 0.0
 
-            self.fc1 = nn.Linear(state_embedding_dim, hidden_dim)
-
-            self.mean = nn.Linear(hidden_dim, action_dim)
-
-            self.log_std_dev = nn.Linear(hidden_dim, action_dim)
+            # Policy network
+            self.net = nn.Sequential(
+                  nn.Linear(state_embedding_dim, hidden_dim),
+                  nn.ReLU(),
+                  nn.Linear(hidden_dim, hidden_dim),
+                  nn.ReLU()
+            )
+            
+            self.mean_layer = nn.Linear(hidden_dim, action_dim)
+            self.log_std_layer = nn.Linear(hidden_dim, action_dim)
 
             self.apply(self._weights_init)
 
       def _weights_init(self, m):
-            
             if isinstance(m, nn.Linear):
                   nn.init.xavier_uniform_(m.weight)
                   nn.init.constant_(m.bias, 0)
 
       def forward(self, state_embedding):
             """Forward pass through the policy network."""
-            x = F.relu(self.fc1(state_embedding))
+            features = self.net(state_embedding)
             
-            mean = self.mean(x)
-            log_std = self.log_std_dev(x)
+            mean = self.mean_layer(features)
+            log_std = self.log_std_layer(features)
             log_std = torch.clamp(log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
             
             return mean, log_std
 
-      def sample(self, state):
+      def sample(self, state_embedding):
             """Sample an action using the reparameterization trick."""
-            mean, log_std = self.forward(state)
+            mean, log_std = self.forward(state_embedding)
             std = log_std.exp()
             
-            # Reparameterization trick: sample from Normal(mean, std)
+            # Reparameterization trick
             normal = Normal(mean, std)
-            x_t = normal.rsample()  # differentiable sample
-            y_t = torch.tanh(x_t)   # squash to (-1, 1)
+            x_t = normal.rsample()
+            y_t = torch.tanh(x_t)
             action = y_t * self.action_scale + self.action_bias
             
-            # Compute log probability with tanh correction
+            # Log probability with tanh correction
             log_prob = normal.log_prob(x_t)
             log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
             log_prob = log_prob.sum(dim=-1, keepdim=True)
@@ -76,3 +80,12 @@ class SacActor(nn.Module):
             
             return action, log_prob, mean_action
 
+      def get_action(self, state_embedding, deterministic=False):
+            """Get action without log prob for inference."""
+            if deterministic:
+                  mean, _ = self.forward(state_embedding)
+                  action = torch.tanh(mean) * self.action_scale + self.action_bias
+                  return action
+            else:
+                  action, _, _ = self.sample(state_embedding)
+                  return action
